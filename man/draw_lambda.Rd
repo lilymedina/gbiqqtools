@@ -4,7 +4,7 @@
 \alias{draw_lambda}
 \title{Draw parameters}
 \usage{
-draw_lambda(model, using = "priors")
+draw_lambda(model, using = NULL)
 }
 \arguments{
 \item{model}{A model created by make_model()}
