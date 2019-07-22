@@ -17,7 +17,7 @@ model <-
    set_parameter_matrix()
     
  conditional_inferences(model, query = "Y[X=1]>Y[X=0]", given = "Y==1")
- expected_learning(model, query = "Y[X=1]>Y[X=0]", strategy = c("M1"), given = "Y==1")
+ expected_learning(model, query = "Y[X=1]>Y[X=0]", strategy = c("1"), given = "Y==1")
 ```
 
 
