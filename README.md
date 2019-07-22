@@ -21,7 +21,7 @@ model <-
 ```
 
 
-# Case selection
+## Case selection
 
 ```
 analysis_model <- reference_model <- model
