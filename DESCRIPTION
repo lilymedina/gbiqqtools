@@ -1,13 +1,11 @@
-Package: gbiqq
+Package: gbiqqtools
 Type: Package
-Title: Generalized BIQQ
+Title: Tools for generalized BIQQ
 Version: 0.0.2
 Authors@R: c(person("Clara", "Bicalho", email = "clarabmcorreia@gmail.com", role = c("aut")),
-             person("Jasper", "Cooper", email = "jjc2247@columbia.edu", role = c("aut")),
              person("Macartan", "Humphreys", email = "mh2245@columbia.edu", role = c("aut")),
-             person("Lily", "Medina", email = "lilymiru@gmail.com", role = c("aut", "cre")),
-             person("Georgiy", "Syunyaev", email = "gs2716@columbia.edu", role = c("aut")))
-Description: Define and update arbitrary binary probabilistic structural models.
+             person("Lily", "Medina", email = "lilymiru@gmail.com", role = c("aut", "cre")))
+Description: Dig.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
@@ -24,6 +22,7 @@ Imports:
     rlang (>= 0.2.0),
     stringr,
     randomizr
+Remotes: macartan/gbiqq
 Suggests: 
     testthat,
     rmarkdown,

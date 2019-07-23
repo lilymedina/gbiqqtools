@@ -1,4 +1,71 @@
+#' helper for ways to allocate N units into n data types: tidies partition::composition output
+#'
+#' @param N Number of observations to be distributed
+#' @param n Number of possible values observations could take
+#' @examples
+#' allocations(4,2)
+allocations <- function(N, n) {
+	x <- partitions::compositions(N,n)
+	x <- data.frame(as.matrix(x))
+	colnames(x) <- 1:ncol(x)
+	x
+}
 
+
+
+#' helper to fill buckets dataframe
+#' @param buckets dataframe with columns event, count and capacity vars plus strategy allocation var
+#' @param vars vars to be observed
+#' @export
+#' @examples
+#' model <- make_model("X->M->Y")
+#' buckets = data.frame(event = "X0Y0", count = 3, capacity = 3, strategy = 2)
+#' # Find different data that might result from looking at "M" in 2 out of 3 X0Y0 data types
+#' fill_bucket(model, buckets, vars = "M")
+fill_bucket <- function(model, buckets, vars, row = 1, column = 4){
+
+	if(!(all(vars %in% model$variables))) stop("Vars not in model$variables")
+
+	# Figure out set of possible finer units
+	df <- simulate_data(model,
+											data_events = data.frame(
+												event = buckets$event[row], count = 1))
+	possible_findings <- perm(rep(1, length(vars)))
+	df <- df %>% slice(rep(1:n(), each = nrow(possible_findings)))
+	df[vars] <- possible_findings
+	df <- collapse_data(df, model)
+	# Assign n across new possible finer events
+	new_events <- cbind(event = df[df$count ==1, "event"],
+											gbiqq:::allocations(buckets[row, column], sum(df$count)))
+
+	# tidy up
+	remaining  <- data.frame(event = buckets[row, 1], matrix(buckets$count[row] - buckets[row, column], ncol = ncol(new_events)-1, nrow = 1))
+	names(remaining) <- names(new_events)
+	rbind(new_events,remaining)
+}
+
+
+#' helper for getting all data on variables with N observed
+#'
+#' @examples
+#' model <- make_model("X->M->Y")
+#' gbiqq:::all_possible(model, N=2, vars = c("X", "M"))
+#' gbiqq:::all_possible(model, N=2, vars = c("X", "Y"), condition = "Y==0")
+all_possible <- function(model, N, vars = NULL, condition = TRUE){
+
+	if(is.null(vars)) vars <- model$variables
+	possible               <- get_max_possible_data(model)
+	if(!all(is.na(vars))) possible[, !names(possible) %in% vars] <- NA
+	possible <- possible[with(possible, eval(parse(text = condition))),]
+
+	d.frame   <- summarize_data(model, possible)
+	df        <- summarize_data(model, possible)[d.frame$count >0 ,1:2]
+
+	possible_data <- gbiqq:::allocations(N, length(df$event))
+	out <- matrix(0, nrow(d.frame), ncol(possible_data))
+	out[d.frame$count >0,] <- as.matrix(possible_data)
+	cbind(d.frame[,1:2], out)
+}
 #' Produces the possible permutations of a set of variables
 #'
 #' @param max A vector of integers indicating the maximum value of an integer value starting at 0. Defaults to 1. The number of permutation is defined by \code{max}'s length
@@ -22,355 +89,3 @@ perm <- function(max = rep(1, 2)){
 	perm
 }
 
-#' Get string between two regular expression patterns
-#'
-#' Returns a substring enclosed by two regular expression patterns. By default returns the name of the arguments being indexed by squared brackets (\code{[]}) in a string containing an expression.
-#'
-#' @param x A character vector of length 1L.
-#' @param left A regular expression to serve as look ahead.
-#' @param right A regular expression to serve as a look behind.
-#' @param rm_left An integer. Number of bites after left-side match to remove from result. Defaults to -1.
-#' @param rm_right An integer. Number of bites after right-side match to remove from result. Defaults to 0.
-#' @return A character vector.
-#' @export
-#' @examples
-#' a <- "(XX[Y=0] == 1) > (XX[Y=1] == 0)"
-#' st_within(a)
-#' b <- "(XXX[[Y=0]] == 1 + XXX[[Y=1]] == 0)"
-#' st_within(b)
-
-st_within <- function(x, left = "[[:punct:]]|\\b", right = "\\[", rm_left = 0, rm_right=-1){
-	if(!is.character(x)) stop("`x` must be a string.")
-	puncts <- gregexpr(left, x, perl = TRUE)[[1]]
-	stops <- gregexpr(right, x, perl = TRUE)[[1]]
-
-	# only index the first of the same boundary
-	# when there are consecutive ones (eg. "[[")
-	consec_brackets <- diff(stops)
-	if(any(consec_brackets == 1)){
-		remov <- which(consec_brackets == 1) + 1
-		stops <- stops[-remov]
-	}
-
-	# find the closest punctuation or space
-	starts <- sapply(stops, function(s){
-		dif <- s - puncts
-		dif <- dif[dif>0]
-		ifelse(length(dif) == 0, ret <- NA, ret <- puncts[which(dif==min(dif))])
-		return(ret)
-	})
-	drop <- is.na(starts) | is.na(stops)
-	sapply(1:length(starts), function(i) if(!drop[i]) substr(x, starts[i]+rm_left, stops[i]+rm_right))
-}
-
-#' Recursive substitution
-#'
-#' Applies \code{gsub()} from multiple patterns to multiple replacements with 1:1 mapping.
-#'
-#' @param x A character vector.
-#' @param pattern_vector A character vector.
-#' @param replacement_vector A character vector.
-#' @param ... Options passed onto \code{gsub()} call.
-#'
-gsub_many <- function(x, pattern_vector, replacement_vector, ...){
-	if(!identical(length(pattern_vector), length(replacement_vector))) stop("pattern and replacement vectors must be the same length")
-	for(i in seq_along(pattern_vector)){
-		x <- gsub(pattern_vector[i], replacement_vector[i], x, ...)
-	}
-	x
-}
-
-#' Generate type matrix
-#' @param parent_n An integer. Number of parents of a given child.
-#'
-type_matrix <- function(parent_n){
-	type_mat <- perm(rep(1, 2^parent_n))
-	if(parent_n == 0){
-		labels <- NULL
-	} else {
-		input_mat <- perm(rep(1, parent_n))
-		labels <- apply(input_mat,1,paste,collapse = "")
-	}
-	colnames(type_mat) <- labels
-	return(type_mat)
-}
-
-#' Clean condition
-#'
-#' Takes string specifying condition and returns properly spaced string.
-#' @param condition A character string. Condition that refers to a unique position (posible outcome) in a nodal type.
-clean_condition <- function(condition){
-	spliced <- strsplit(condition, split = "")[[1]]
-	spaces <- grepl("[[:space:]]", spliced, perl = TRUE)
-	paste(spliced[!spaces], collapse = " ")
-}
-
-#' Interpret or find position in nodal type
-#'
-#' Interprets the position of one or more digits (specified by \code{position}) in a nodal type. Alternatively returns nodal type digit positions that correspond to one or more given \code{condition}.
-#' @param model A model object generated by \code{make_model()}.
-#' @param condition A vector of strings specifying the child variable, followed by "|" (given) and the values of its parent variables in \code{model}.
-#' @param position A named list of integers. The name is the name of the child variable in \code{model}, and its value a vector of digit positions in that variable's nodal type to be interpreted. See `Details`.
-#' @details A node for a child variable X with \code{k} parents has a nodal type represented by X followed by \code{2^k} digits. Argument \code{position} allows user to interpret the meaning of one or more digit positions in any nodal type. For example \code{position = list(X = 1:3)} will return the interpretation of the first three digits in causal types for X. Argument \code{condition} allows users to query the digit position in the nodal type by providing instead the values of the parent variables of a given child. For example, \code{condition = "X | Z=0 & R=1"} returns the digit position that corresponds to values X takes when Z = 0 and R = 1.
-#' @examples
-#' model <- make_model("R -> X; Z -> X; X -> Y")
-#' #Example using digit position
-#' lookup_type(model, position = list(X = c(3,4), Y = 1))
-#' #Example using condition
-#' lookup_type(model, condition = c("X | Z=0 & R=1", "X | Z=0 & R=0"))
-#' #Return interpretation of all digit positions of all nodes
-#' lookup_type(model)
-#' @export
-lookup_type <- function(model, condition = NULL, position = NULL){
-	if(sum(!is.null(condition) & !is.null(position))>1)
-		stop("Must specify either `query` or `nodal_position`, but not both.")
-	parents <- get_parents(model)
-	types <- lapply(lapply(parents, length), function(l) perm(rep(1, l)))
-
-	if(is.null(position)){
-		position <- lapply(types, function(i) ifelse(length(i)==0, return(NA), return(1:nrow(i))))
-	}else{
-		if(!all(names(position) %in% names(types))) stop("One or more names in `position` not found in model.")
-	}
-
-	interpret <- lapply(1:length(position), function(i){
-		positions <- position[[i]]
-		type <- types[[names(position)[i]]]
-		pos_elements <- type[positions,]
-
-		if(!all(is.na(positions))){
-			interpret <- sapply(1:nrow(pos_elements), function(row)
-				paste0(parents[[names(position)[i]]], " = ", pos_elements[row,], collapse = " & "))
-			interpret <- paste0(paste0(c(names(position)[i], " | "), collapse = ""), interpret)
-			# Create "Y*[*]**"-type representations
-			asterisks <- rep("*", nrow(type))
-			asterisks_ <- sapply(positions, function(s){
-				if(s < length(asterisks)){
-					if(s == 1) paste0(c("[*]", asterisks[(s+1):length(asterisks)]), collapse = "")
-					else paste0(c(asterisks[1:(s-1)], "[*]", asterisks[(s+1):length(asterisks)]), collapse = "")
-				} else {
-					paste0(c(asterisks[1:(s-1)], "[*]"), collapse = "")
-				}
-			})
-			display <- paste0(names(position)[i], asterisks_)
-		} else {
-			interpret <- paste0(
-				paste0(c(names(position)[i], " = "), collapse = ""),
-				c(0,1))
-			display <- paste0(names(position)[i], c(0,1))
-		}
-		data.frame(variable = names(position)[i],
-							 position = position[[i]],
-							 display = display,
-							 interpretation = interpret, stringsAsFactors = FALSE)
-	})
-
-	names(interpret) <- names(position)
-
-	if(!is.null(condition)){
-		conditions <- sapply(condition, clean_condition)
-		interpret_ <- lapply(interpret, function(i){
-			slct <- sapply(conditions, function(cond){
-				a <- trimws(strsplit(cond, "&|\\|")[[1]])
-				sapply(i$interpretation, function(bi){
-					b <- trimws(strsplit(bi, "&|\\|")[[1]])
-					all(a %in% b)
-				})
-			})
-			i <- i[rowSums(slct) > 0,]
-			if(nrow(i)==0) i <- NULL
-			i
-		})
-		interpret <- interpret_[!sapply(interpret_, is.null)]
-	}
-
-	return(interpret)
-}
-
-#' Expand wildcard
-#'
-#' Expand statement containing wildcard
-#'
-#' @param to_expand A character vector of length 1L.
-#' @param join_by A character vector of length 1L.
-#' @importFrom rlang expr
-#' @export
-#' @examples
-#' expand_wildcard("(Y[X=1, M=.] > Y[X=1, M=.])")
-#'
-expand_wildcard <- function(to_expand, join_by = "|"){
-	orig <- st_within(to_expand, left= "\\(", right="\\)", rm_left = 1)
-	if(is.list(orig)){
-		if(is.null(orig[[1]]))
-			stop("The character expressions to be expanded must be contained within parentheses")
-	}
-	skeleton <- gsub_many(to_expand, orig, paste0("%expand%", 1:length(orig)),
-												fixed = TRUE)
-	expand_it <- grepl("\\.", orig)
-
-	expanded_types <- lapply(1:length(orig), function(i){
-		if(!expand_it[i])
-			return(orig[i])
-		else {
-			exp_types <- strsplit(orig[i], ".", fixed = TRUE)[[1]]
-			a <- gregexpr("\\w{1}\\s*(?=(=\\s*\\.){1})", orig[i], perl = TRUE)
-			matcha <- trimws(unlist(regmatches(orig[i], a)))
-			rep_n <- sapply(unique(matcha), function(e) sum(matcha == e))
-			n_types <- length(unique(matcha))
-			grid <- replicate(n_types, expr(c(0,1)))
-			type_values <- do.call(expand.grid, grid)
-			colnames(type_values) <- unique(matcha)
-
-			apply(type_values, 1, function(s){
-				to_sub <- paste0(colnames(type_values), "(\\s)*=(\\s)*$")
-				subbed <- gsub_many(exp_types, to_sub, paste0(colnames(type_values), "=", s), perl = TRUE)
-				paste0(subbed, collapse = "")
-			})
-		}
-	})
-
-	if(!is.null(join_by)){
-		oper <- sapply(expanded_types, function(l){
-			paste0(l, collapse = paste0(" ", join_by, " "))
-		})
-		if(length(orig)==1 && length(orig)!=length(oper)){
-			oper <- sapply(expanded_types, function(a) gsub("%expand%1", a, skeleton))
-			oper_return <- paste0(oper, collapse = paste0(" ", join_by, " "))
-		}else{
-			oper_return <- gsub_many(skeleton,paste0("%expand%", 1:length(orig)), oper)
-		}
-
-	} else {
-		oper <- do.call(cbind, expanded_types)
-		oper_return <- apply(oper, 1, function(i) gsub_many(skeleton,
-																												paste0("%expand%", 1:length(orig)),i))
-	}
-	cat("Generated expanded expression:\n")
-	cat(unlist(oper_return), sep = "\n")
-	oper_return
-}
-
-
-
-#' get_parameter_names
-#' @param P P matrix
-#' @export
-#'
-get_parameter_names <- function(P){
-	param_set          <- attr(P, "param_set")
-	param_sets         <- unique(param_set)
-	par_names          <- paste0(param_set, ".", rownames(P))
-	par_names
-}
-
-#'combine two lists by names
-#'
-#' @param list1 a list
-#' @param list2 a list typically different than list1
-combine_lists <- function(list1, list2){
-
-		matches <- names(list1) %in% names(list2)
-		matching_names <- names(list1)[matches]
-		matches2 <- names(list2) %in% names(list1)
-
-		if(any(matches)){
-			combined_list <- sapply(matching_names, function(nam){
-				out <- c(list1[[nam]], list2[[nam]])
-				out[!duplicated(names(out))]
-			}, simplify = FALSE)
-
-			combined_list <- c(combined_list, list1[!matches])
-			combined_list <- c(combined_list, list2[!matches2])
-		} else{
-			combined_list <- c(list1, list2)
-		}
-
-		combined_list
-}
-
-#' Whether a query contains an exact string
-#' @param var Variable name
-#' @param query An expression in string format.
-includes_var <- function(var, query)
-	length(grep (paste0("\\<", var, "\\>"), query))>0
-
-#' List of variables contained in query
-#' @param model A model object generated by \code{make_model()}.
-#' @param query An expression in string format.
-#'
-var_in_query <- function(model, query){
-	v <- 	model$variables
-	v[sapply(v, 	includes_var, query = query)]
-}
-
-
-#' Check for discrepancies
-#' Used in make_alphas
-#' @param alphas alphas provided by the user in set_priors/make_priors
-#' @param translated_alphas alphas that were expressed as a causal query.
-any_discrepancies <- function(alphas, translated_alphas){
-	error_message <- NULL
-	repeated_parameters <- names(unlist( 	translated_alphas  )) %in% names(unlist(alphas))
-	if(any(repeated_parameters)){
-		query_alpha <- attr(translated_alphas, "query")
-		i_repeated  <-	which(repeated_parameters)
-		q_repeated  <- unlist(translated_alphas)[i_repeated]
-		names(q_repeated) <- names(unlist(translated_alphas))[i_repeated]
-		names(q_repeated) <- sapply(  names(q_repeated) , function(q){
-			stop <- gregexpr("\\.", q, perl = TRUE)[[1]][1]
-			substr(q, stop + 1, nchar(q))
-		})
-		q_repeated <- q_repeated[order(names(q_repeated))]
-
-		i_alphas_repeated <- names(unlist(alphas)) %in% names(unlist(translated_alphas))
-		alphas_repeated <-  unlist(alphas)[i_alphas_repeated]
-		names(alphas_repeated)  <-  names(unlist(alphas))[i_alphas_repeated]
-
-		names(alphas_repeated) <- sapply(  names(alphas_repeated) , function(q){
-			stop <- gregexpr("\\.", q, perl = TRUE)[[1]][1]
-			substr(q, stop + 1, nchar(q))
-		})
-		alphas_repeated <-  alphas_repeated[order(names(alphas_repeated))]
-
-		if(!identical(alphas_repeated, q_repeated)){
-			a_discrepancies  <- 	alphas_repeated[alphas_repeated != q_repeated]
-			q_discrepancies  <- 	q_repeated[alphas_repeated != q_repeated]
-			adicrepancy_names <- names(alphas_repeated)[alphas_repeated != q_repeated]
-
-			error_message <- unlist(sapply(query_alpha, function(q){
-				sapply(1:length(q), function(j){
-					r <- q[[j]] %in%  adicrepancy_names
-					if(any(r)){
-						paste0( names(q)[j] , " = ", q_discrepancies[ q[[j]][r]] ,", ", q[[j]][r], " = ", a_discrepancies[ q[[j]][r]], "\n")
-					} })}))
-		}
-	}
-	return(error_message)
-}
-
-#' Make nodes from matrix
-#' @param mat A character matrix. For each variable contained in a model, matrix contains named columns with nodal values.
-#' @return A named list of causal types for each variable
-#'
-make_nodal_types <- function(mat){
-	type_names  <- sapply(1:ncol(mat), function(j)
-		paste0(names(mat)[j], mat[,j]))
-	colnames(type_names) <- colnames(mat)
-	apply(type_names, 2, unique)
-}
-
-#' Exclude node from causal type restriction
-#' Returns updated vector of rows in causal type matrix to be excluded, taking into account nodal types affected by restriction.
-#' @param var_name A string. Variable name in a model.
-#' @param causal_types A data.frame of causal types of a model.
-#' @param in_restriction A logical vector. Rows of \code{causal_type} in restriction query.
-#' @return A logical vector
-#' @importFrom dplyr %>% group_by_at mutate
-exclude_node_from_causal_type <- function(var_name, causal_types, in_restriction){
-	if("types" %in% names(in_restriction)) in_restriction <- in_restriction$types
-	types <- causal_types[var_name] %>%
-		mutate(restrict = in_restriction) %>%
-		group_by_at(.vars = var_name) %>%
-		mutate(rm_node = sum(restrict)==n())
-	types$rm_node
-}
