@@ -1,4 +1,5 @@
 library(testthat)
 library(gbiqq)
+library(gbiqqtools)
 
-test_check("gbiqq")
+test_check("gbiqqtools")
